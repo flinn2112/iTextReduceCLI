@@ -14,8 +14,12 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
+import java.util.Vector ;
 import java.util.Hashtable ;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import java.util.function.*;
 
 /**
  *
@@ -79,34 +83,80 @@ public class ITextReduce {
         System.out.println("END!");
     }
     
-    private static int processOptions(Hashtable ht) throws Exception{
+    private static int processOptions(Hashtable htArgs) throws Exception{
         String strOption = null ;
+        String strIn     = null ;
+        String strOut    = null ;
+        Vector<String> _VFiles = null ;     
+        fileStuff      fs = null ;
         int iRet = 0 ;
-        strOption = (String)ht.get("-mode") ;
+        boolean bRet = false ;
+        strOption = (String)htArgs.get("-mode") ;
+        
         if( null == strOption){
             throw new Exception("!No arguments found.") ;
         }
         
+        strIn = (String)htArgs.get("-in") ;
+        
+        /*
+            1.8.10.18: die Argumente f und d sind eigentlich nicht handlich.
+            Besser man nimmt -in aus den Argumenten und checkt, ob es ein Directory oder ein PDF ist und handelt entsprechend.
+            Batch können wir auch automatisieren, indem auf die Dateiendung '.txt' geprüft wird.
+        */
+        
+        fs = new fileStuff(strIn, "", "min") ;
+        
+        if( fs.isDir() ){
+            _VFiles = new Vector<String>();
+            System.out.println("Processing Directory [" +  fs.m_fullPath + "]") ;
+            directoryStuff.collectFiles(fs.m_fullPath, _VFiles, 1) ;   
+            Pattern pattern = Pattern.compile(".+\\.pdf");
+            directoryStuff.filter(_VFiles, pattern) ;
+            for(int i=0;i<_VFiles.size();i++){  //
+                fs = new fileStuff(_VFiles.get(i), null, "_min" ) ;
+                strOut = ITextReduce.processFile(fs) ;
+                //wir müssen lastMod setzen
+                bRet = fs.syncTime(strOut) ;
+             }
+            return _VFiles.size();
+        }
+        
+        if( fs.isPDF()){
+            System.out.println("Processing File [" +  fs.m_fullPath + "]") ;
+            ITextReduce.processFile(fs);
+            return 1 ;
+        }
+        
+        if( fs.isBatch() ){
+            ITextReduce.processBatch(htArgs) ;
+        }        
+        
         switch(strOption){
             case "f": //file
-                
+                break ;
             case "d": //dir
+                break ;
             case "b": {
-            try {
-                //batch
-                ITextReduce.processBatch(ht) ;
-            } catch (Exception ex) {
-                Logger.getLogger(ITextReduce.class.getName()).log(Level.SEVERE, null, ex);
-                throw ex ;
+                    try {
+                        //batch
+                        ITextReduce.processBatch(htArgs) ;
+                    } catch (Exception ex) {
+                        Logger.getLogger(ITextReduce.class.getName()).log(Level.SEVERE, null, ex);
+                        throw ex ;
+                    }
             }
-        }
+            break ;
             default:
                iRet = 0 ; 
         }
         
         return iRet ;
-    }
-
+    }    
+    
+    /*
+        diese Method sollte eigentlich in Klasse fileStuff wandern
+    */
     private static String makeFilename(String strPath, String strIn, String strFileExt, String strPrefix, String strPostfix){
         StringBuilder sb = new StringBuilder();
         if( null == strPrefix && null == strPostfix ){
@@ -114,6 +164,7 @@ public class ITextReduce {
         }
         if( null != strPrefix && !strPrefix.isEmpty() ){
             sb.append(strPrefix) ;
+            sb.append(".") ;
             sb.append(strPath) ;
             sb.append(File.separator) ;
             sb.append(strIn) ;
@@ -122,11 +173,26 @@ public class ITextReduce {
             sb.append(strPath) ;
             sb.append(File.separator) ;
             sb.append(strIn) ;
+            sb.append(".") ;
             sb.append(strPostfix) ;
         }
         sb.append(".") ;
         sb.append(strFileExt) ;
         return sb.toString() ;
+    }
+    
+    private static String processFile(fileStuff fsIn) throws java.lang.Exception{
+        String[] rParts = null ;
+        String strOut = null ;
+        
+        strOut = ITextReduce.makeFilename(fsIn.getTargetDir(), fsIn.m_nakedName, fsIn.m_ext, fsIn.m_prefix, fsIn.m_postfix) ;            
+        System.out.println("Processing [" +  fsIn.m_fullPath + "->" + strOut + "]") ;
+        try{
+            com.hcc_medical.mavenproject1.mainStuff.reducePdf(fsIn.m_fullPath, strOut);
+        }catch(Exception ex){
+            System.err.println("processLine - error: " + ex.toString());
+        }
+        return strOut ;
     }
     
     private static void processLine(fileStuff fsBatchFile, String strLine, String strTargetDir) throws java.lang.Exception{
@@ -156,13 +222,14 @@ public class ITextReduce {
     }
     
     /*
-        
+        Eine Datei(deren Namen in der HashTable der Argumente steht), die Dateinamen enthält,
+        wird abgearbeitet.
     */
-    private static void processBatch(Hashtable ht) throws Exception{
+    private static void processBatch(Hashtable htArgs) throws Exception{
         String strValue = null ;
         File f = null ;
         fileStuff fs = null ;
-        strValue = (String)ht.get("-in") ;
+        strValue = (String)htArgs.get("-in") ;
         if(null == strValue){
             throw new Exception("No value for argument '-in' found.") ;
         }
@@ -172,7 +239,7 @@ public class ITextReduce {
             throw new Exception("Batch file [" + strValue + "] is not accessible") ;
         }
         fs = new fileStuff(f) ;  //create an object for the batch file
-        fs.m_htOptions = ht ;
+        fs.m_htOptions = htArgs ;
         processBatch(fs) ;        
     }
     
@@ -224,7 +291,9 @@ public class ITextReduce {
         throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
     }
 }
-
+   /*
+    Eine Klasse f. die Verarbeitung von Dateien
+   */
    class fileStuff{
         public  File      m_file = null ;
         public  String    m_ext = null ;
@@ -240,16 +309,16 @@ public class ITextReduce {
         public fileStuff(File f) throws Exception{
             init(f) ;
         }
+        
         public fileStuff(String strPath, String prefix, String postfix) throws Exception{
-            File f = new File(strPath) ;
+            File f = new File(strPath) ;            
             if( null == f ){
                 throw new Exception("Something's wrong with file [" + strPath + "]") ;
             }
             
            if( !f.canRead() ){
                throw new Exception("Cannot read file [" + strPath + "]") ;
-           }
-            
+           }            
             m_prefix  = prefix ;
             m_postfix = postfix ;
             init(f) ;
@@ -267,8 +336,11 @@ public class ITextReduce {
         private void init(File f) throws Exception{
             String strPath = null ;
             m_ext = getExtension(f.getName()) ;
-            m_name = f.getName() ;
-            m_nakedName = m_name.replace( "." + m_ext, "") ;
+            if( null != m_ext ){
+              m_ext = m_ext.toLowerCase() ;
+              m_name = f.getName() ;
+              m_nakedName = m_name.replace( "." + m_ext, "") ;
+            }
             m_fullPath = f.getAbsolutePath() ;
             m_file = f ;
             strPath = f.getAbsolutePath() ;
@@ -276,6 +348,25 @@ public class ITextReduce {
             setTargetDir(strPath) ;
         }
         
+        public boolean isDir(){
+            return m_file.isDirectory() ;
+        }
+        
+        public boolean isPDF(){
+            return ( m_file.isFile() && m_ext.equals("pdf")  ) ;
+        }
+        
+        public boolean isBatch(){
+            return ( m_file.isFile() &&  m_ext.equals("txt") ) ;
+        }
+        
+        //lastMod angleichen von files
+        public boolean syncTime(String strFile){
+            File f = new File(strFile) ;
+            return f.setLastModified(m_file.lastModified()) ;
+        }
+                
+                
         //!set targetDir has to check for some
         public void setTargetDir(File f) throws Exception{
             if(!f.isDirectory()){
@@ -317,5 +408,72 @@ public class ITextReduce {
 
             return strRet ;
          }
+        
+    }
+
+    class typePredicate<T> implements Predicate<T>{
+        private Pattern m_pattern ;
+        typePredicate(Pattern pattern){
+            m_pattern = pattern ;
+        }
+        
+        T varc1;
+        //Rückgabe TRUE heisst 'weg damit'.
+        public boolean test(T varc){
+            Matcher matcher = null ;  
+          
+            matcher = m_pattern.matcher(  (String) varc );
+            return ( false == matcher.find() ); //muss das umdrehen, Pattern ist z.B. *.pdf das gibt true, brauche aber false.
+            /*
+            if(varc1.equals(varc)){
+             return true;
+            }
+                */
+        
+        }
+      }
+
+    class directoryStuff{        
+        
+        public static int filter(Vector<String> vFiles, Pattern pattern){
+            typePredicate<String> filter;
+            filter = new typePredicate<> (pattern);
+            Matcher matcher = null ;             
+            vFiles.removeIf(filter) ;
+            return vFiles.size() ; 
+        }
+        
+        public static int collectFiles(String strObjectName, Vector<String> vFiles, int iMaxDepth){
+            String strFilename = null ;
+            String strPath     = null ;
+            String strExt      = null ;
+            String rAttributes[] = null ;
+            //The configuration may be colon separated - split      
+            File file = new File(strObjectName) ;    
+            if (file.isDirectory()) { //abgeben in Rekursion
+                if( iMaxDepth > 0){
+                    iMaxDepth-- ;
+                }
+                else{ //alle Levels aufgebraucht.
+                    return vFiles.size() ; //alles beenden
+                }
+                File[] files = file. listFiles();
+              // an IO error could occur
+                    if (files != null) {              
+                                System.out.println("Directory " + file.getPath() + " will be collected.");
+                      for (int i = 0; i < files.length; i++) {  
+                          {
+                            collectFiles(file.getAbsolutePath() + File.separator + files[i].getName(), vFiles, iMaxDepth) ;
+                          }
+                        }  //files != null        
+                    }
+                    else{            
+                            System.out.println("Directory " + file.getName() + " contains no files.");       
+                    }       
+                //return vFiles.size() ; //do not add directories
+              }
+            vFiles.add(strObjectName) ;
+            return vFiles.size() ; 
+         }//collectFiles
         
     }
